@@ -82,6 +82,8 @@ class ContourEditorView(QGraphicsView):
         self.selected_index: int | None = None
         self._moving_handle_index: int | None = None
         self._panning = False
+        self._did_initial_fit = False
+        self._user_changed_view = False
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -103,7 +105,7 @@ class ContourEditorView(QGraphicsView):
         self._scene.addItem(self._path_item)
         self._handle_items: list[ControlPointItem] = []
         self._rebuild_items()
-        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._fit_scene_to_view()
 
     def begin_handle_move(self, index: int) -> None:
         self._moving_handle_index = index
@@ -159,6 +161,7 @@ class ContourEditorView(QGraphicsView):
         self._rebuild_items()
 
     def wheelEvent(self, event) -> None:  # noqa: N802
+        self._user_changed_view = True
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
         self.scale(factor, factor)
 
@@ -174,6 +177,7 @@ class ContourEditorView(QGraphicsView):
     def mousePressEvent(self, event) -> None:  # noqa: N802
         item = self.itemAt(event.position().toPoint())
         if event.button() == Qt.MouseButton.LeftButton and not isinstance(item, ControlPointItem):
+            self._user_changed_view = True
             self._panning = True
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         super().mousePressEvent(event)
@@ -188,6 +192,17 @@ class ContourEditorView(QGraphicsView):
         self.insert_point_at_scene_pos(self.mapToScene(event.position().toPoint()))
         event.accept()
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not self._did_initial_fit:
+            self._fit_scene_to_view()
+            self._did_initial_fit = True
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if not self._did_initial_fit and not self._user_changed_view:
+            self._fit_scene_to_view()
+
     def _rebuild_items(self) -> None:
         for item in self._handle_items:
             self._scene.removeItem(item)
@@ -197,6 +212,10 @@ class ContourEditorView(QGraphicsView):
             self._scene.addItem(handle)
             self._handle_items.append(handle)
         self._refresh_path_only()
+
+    def _fit_scene_to_view(self) -> None:
+        self.resetTransform()
+        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _refresh_path_only(self) -> None:
         points = self.session.current_points
