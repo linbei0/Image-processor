@@ -8,6 +8,7 @@ import numpy as np
 
 MIN_POLYGON_POINTS = 4
 DEFAULT_HISTORY_LIMIT = 32
+DIRTY_RECT_MARGIN = 3
 
 
 @dataclass(slots=True)
@@ -149,21 +150,15 @@ class ManualRefineSession:
 
     @property
     def contour_mask(self) -> np.ndarray:
-        if self._contour_mask_cache is None:
-            self._contour_mask_cache = polygon_to_mask(self.current_points, self.image_shape)
-        return self._contour_mask_cache.copy()
+        return self._ensure_contour_mask().copy()
 
     @property
     def active_mask(self) -> np.ndarray:
-        if self._active_mask_cache is None:
-            contour_mask = self.contour_mask if self._contour_mask_cache is None else self._contour_mask_cache
-            self._active_mask_cache = compose_active_mask(
-                auto_mask=self.auto_mask,
-                contour_mask=contour_mask,
-                brush_add_mask=self.brush_add_mask,
-                brush_erase_mask=self.brush_erase_mask,
-            )
-        return self._active_mask_cache.copy()
+        return self._ensure_active_mask().copy()
+
+    def active_mask_region(self, rect: tuple[int, int, int, int]) -> np.ndarray:
+        x0, y0, x1, y1 = rect
+        return self._ensure_active_mask()[y0:y1, x0:x1].copy()
 
     def snapshot(self) -> EditSnapshot:
         return EditSnapshot(
@@ -177,6 +172,22 @@ class ManualRefineSession:
         self.brush_add_mask = snapshot.brush_add_mask.copy()
         self.brush_erase_mask = snapshot.brush_erase_mask.copy()
         self._invalidate_caches()
+
+    def _ensure_contour_mask(self) -> np.ndarray:
+        if self._contour_mask_cache is None:
+            self._contour_mask_cache = polygon_to_mask(self.current_points, self.image_shape)
+        return self._contour_mask_cache
+
+    def _ensure_active_mask(self) -> np.ndarray:
+        if self._active_mask_cache is None:
+            contour_mask = self._ensure_contour_mask()
+            self._active_mask_cache = compose_active_mask(
+                auto_mask=self.auto_mask,
+                contour_mask=contour_mask,
+                brush_add_mask=self.brush_add_mask,
+                brush_erase_mask=self.brush_erase_mask,
+            )
+        return self._active_mask_cache
 
     def _invalidate_caches(self, *, contour: bool = True, active: bool = True) -> None:
         if contour:
@@ -216,7 +227,7 @@ class ManualRefineSession:
             self.push_history()
             self._brush_stroke_active = True
 
-    def apply_brush(self, center: tuple[float, float], radius: int, brush_mode: str) -> None:
+    def apply_brush(self, center: tuple[float, float], radius: int, brush_mode: str) -> tuple[int, int, int, int]:
         radius = max(1, int(radius))
         x = int(np.clip(round(center[0]), 0, self.image_shape[1] - 1))
         y = int(np.clip(round(center[1]), 0, self.image_shape[0] - 1))
@@ -227,9 +238,20 @@ class ManualRefineSession:
         else:
             cv2.circle(self.brush_add_mask, (x, y), radius, 0.0, thickness=-1)
         self._invalidate_caches(contour=False, active=True)
+        return self._brush_dirty_rect(x, y, radius)
 
     def end_brush_stroke(self) -> None:
         self._brush_stroke_active = False
+
+    def _brush_dirty_rect(self, x: int, y: int, radius: int) -> tuple[int, int, int, int]:
+        width = self.image_shape[1]
+        height = self.image_shape[0]
+        margin = DIRTY_RECT_MARGIN
+        x0 = max(0, x - radius - margin)
+        y0 = max(0, y - radius - margin)
+        x1 = min(width, x + radius + margin)
+        y1 = min(height, y + radius + margin)
+        return x0, y0, x1, y1
 
     def undo(self) -> bool:
         if not self._undo_stack:

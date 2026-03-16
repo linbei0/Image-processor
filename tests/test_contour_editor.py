@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtWidgets import QGraphicsView
 
 from core.manual_refine import ManualRefineSession
@@ -68,3 +68,24 @@ def test_editor_throttles_repeated_brush_refreshes(
     editor_view._maybe_refresh_visuals(force=True)
 
     assert refresh_calls["count"] == 2
+
+
+def test_editor_uses_partial_overlay_refresh_for_brush_updates(
+    editor_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    editor_view.set_edit_mode("brush")
+    editor_view.session.begin_brush_stroke()
+    calls = {"full": 0, "partial": 0}
+
+    monkeypatch.setattr(editor_view, "_refresh_visuals", lambda: calls.__setitem__("full", calls["full"] + 1))
+    monkeypatch.setattr(
+        editor_view,
+        "_refresh_overlay_region",
+        lambda rect: calls.__setitem__("partial", calls["partial"] + 1),
+    )
+
+    editor_view._apply_brush_at_scene_pos(QPointF(20.0, 20.0))
+
+    assert calls["full"] == 0
+    assert calls["partial"] == 1

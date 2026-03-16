@@ -229,11 +229,15 @@ class IdPhotoWindow(QMainWindow):
         self.manual_refine_button = QPushButton("手动微调")
         self.manual_refine_button.setMinimumHeight(40)
         self.manual_refine_button.setEnabled(False)
+        self.restore_auto_button = QPushButton("重新抠图")
+        self.restore_auto_button.setMinimumHeight(40)
+        self.restore_auto_button.setEnabled(False)
         self.export_button = QPushButton("导出结果")
         self.export_button.setMinimumHeight(40)
         self.export_button.setEnabled(False)
         header.addWidget(self.import_button)
         header.addWidget(self.manual_refine_button)
+        header.addWidget(self.restore_auto_button)
         header.addWidget(self.export_button)
         root.addLayout(header)
 
@@ -327,6 +331,7 @@ class IdPhotoWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self.import_button.clicked.connect(self.choose_image)
         self.manual_refine_button.clicked.connect(self.open_manual_refine)
+        self.restore_auto_button.clicked.connect(self.restore_auto_result)
         self.export_button.clicked.connect(self.export_result)
         self.bg_button_group.buttonClicked.connect(lambda _: self.schedule_process())
         self.edge_slider.valueChanged.connect(self._on_edge_value_changed)
@@ -359,6 +364,7 @@ class IdPhotoWindow(QMainWindow):
         self.current_input_path = image_path
         self.current_result = None
         self.manual_refine_button.setEnabled(False)
+        self.restore_auto_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self._load_original_preview(image_path)
         self._update_result_placeholder("正在处理图片，请稍候...")
@@ -435,6 +441,17 @@ class IdPhotoWindow(QMainWindow):
         self._on_process_succeeded(request, updated)
         self.statusBar().showMessage("已应用手动微调", 6000)
 
+    def restore_auto_result(self) -> None:
+        if self.current_input_path is None or self.current_result is None:
+            return
+        self.current_result.manual_mask = None
+        self.current_result.manual_contour_mask = None
+        self.current_result.manual_brush_add_mask = None
+        self.current_result.manual_brush_erase_mask = None
+        self.restore_auto_button.setEnabled(False)
+        self.statusBar().showMessage("??????????...", 0)
+        self.coordinator.process(self._build_request())
+
     def _build_request(self) -> ProcessingRequest:
         if self.current_input_path is None:
             raise RuntimeError("导入图片后才能处理")
@@ -479,6 +496,7 @@ class IdPhotoWindow(QMainWindow):
         self.import_button.setEnabled(not busy)
         self.export_button.setEnabled(not busy and self.current_result is not None)
         self.manual_refine_button.setEnabled(not busy and self.current_result is not None)
+        self.restore_auto_button.setEnabled(not busy and self._has_manual_result())
         for button in self.color_buttons.values():
             button.setEnabled(not busy)
         self.edge_slider.setEnabled(not busy)
@@ -497,6 +515,7 @@ class IdPhotoWindow(QMainWindow):
         self.result_preview.set_rgb_array(result.preview_image)
         self.export_button.setEnabled(True)
         self.manual_refine_button.setEnabled(True)
+        self.restore_auto_button.setEnabled(self._has_manual_result(result))
         self._refresh_model_notice()
         detail = "（已手动微调）" if result.manual_mask is not None else ""
         self.statusBar().showMessage(
@@ -509,6 +528,7 @@ class IdPhotoWindow(QMainWindow):
         self.current_result = None
         self.export_button.setEnabled(False)
         self.manual_refine_button.setEnabled(False)
+        self.restore_auto_button.setEnabled(False)
         self._update_result_placeholder(message)
         self._refresh_model_notice(message if message.startswith("模型未准备好") else None)
         self.statusBar().showMessage(message, 12000)
@@ -546,3 +566,17 @@ class IdPhotoWindow(QMainWindow):
         if self.current_input_path is not None:
             return self.current_input_path.parent
         return Path.home()
+
+    def _has_manual_result(self, result: ProcessingResult | None = None) -> bool:
+        target = result or self.current_result
+        if target is None:
+            return False
+        return any(
+            value is not None
+            for value in (
+                target.manual_mask,
+                target.manual_contour_mask,
+                target.manual_brush_add_mask,
+                target.manual_brush_erase_mask,
+            )
+        )

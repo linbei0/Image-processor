@@ -189,6 +189,7 @@ def test_manual_refine_button_only_enables_after_result(
     qtbot.waitUntil(lambda: window.manual_refine_button.isEnabled(), timeout=3000)
 
     assert window.manual_refine_button.isEnabled()
+    assert not window.restore_auto_button.isEnabled()
 
 
 def test_manual_refine_apply_updates_result_without_rerunning_pipeline(
@@ -218,3 +219,34 @@ def test_manual_refine_apply_updates_result_without_rerunning_pipeline(
 
     assert len(pipeline.process_calls) == initial_calls
     assert window.current_result.manual_mask is not None
+
+
+def test_restore_auto_result_reprocesses_without_reimport(
+    tmp_path: Path, qtbot, monkeypatch: pytest.MonkeyPatch, settings_store: AppSettingsStore
+) -> None:
+    model_path = tmp_path / "modnet.onnx"
+    model_path.write_bytes(b"ready")
+    image_path = tmp_path / "portrait.png"
+    create_image(image_path)
+    pipeline = FakePipeline(model_path)
+    window = IdPhotoWindow(pipeline=pipeline, settings_store=settings_store)
+    qtbot.addWidget(window)
+    window.show()
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(image_path), "PNG"))
+    qtbot.mouseClick(window.import_button, Qt.LeftButton)
+    qtbot.waitUntil(lambda: window.manual_refine_button.isEnabled(), timeout=3000)
+
+    manual_mask = np.zeros((24, 24), dtype=np.float32)
+    manual_mask[6:-6, 6:-6] = 1.0
+    window._apply_manual_refine(manual_mask)
+    qtbot.waitUntil(lambda: window.restore_auto_button.isEnabled(), timeout=3000)
+
+    before_restore_calls = len(pipeline.process_calls)
+    qtbot.mouseClick(window.restore_auto_button, Qt.LeftButton)
+    qtbot.waitUntil(lambda: len(pipeline.process_calls) == before_restore_calls + 1, timeout=3000)
+
+    assert window.current_input_path == image_path
+    assert window.current_result is not None
+    assert window.current_result.manual_mask is None
+    assert not window.restore_auto_button.isEnabled()

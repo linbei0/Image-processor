@@ -126,7 +126,8 @@ class ContourEditorView(QGraphicsView):
         self.setSceneRect(0, 0, image.shape[1], image.shape[0])
 
         self._image_item = QGraphicsPixmapItem(QPixmap.fromImage(_rgb_to_qimage(image)))
-        self._overlay_item = QGraphicsPixmapItem(_mask_overlay(session.active_mask))
+        self._overlay_pixmap = _mask_overlay(session.active_mask)
+        self._overlay_item = QGraphicsPixmapItem(self._overlay_pixmap)
         self._overlay_item.setOpacity(0.55)
         self._path_item = QGraphicsPathItem()
         self._path_item.setPen(QPen(QColor("#38bdf8"), 2.0))
@@ -245,8 +246,7 @@ class ContourEditorView(QGraphicsView):
         if self.edit_mode == "brush" and event.button() == Qt.MouseButton.LeftButton:
             self._painting = True
             self.session.begin_brush_stroke()
-            self.session.apply_brush((scene_pos.x(), scene_pos.y()), self.brush_radius, self.current_brush_mode)
-            self._maybe_refresh_visuals(force=True)
+            self._apply_brush_at_scene_pos(scene_pos, force_full=False)
             return
         if event.button() == Qt.MouseButton.LeftButton and not isinstance(item, ControlPointItem):
             self._user_changed_view = True
@@ -259,8 +259,7 @@ class ContourEditorView(QGraphicsView):
         if self.edit_mode == "brush":
             self._cursor_item.update_cursor(scene_pos, self.brush_radius)
             if self._painting:
-                self.session.apply_brush((scene_pos.x(), scene_pos.y()), self.brush_radius, self.current_brush_mode)
-                self._maybe_refresh_visuals()
+                self._apply_brush_at_scene_pos(scene_pos, force_full=False)
                 return
         super().mouseMoveEvent(event)
 
@@ -320,10 +319,33 @@ class ContourEditorView(QGraphicsView):
         path.closeSubpath()
         self._path_item.setPath(path)
         try:
-            self._overlay_item.setPixmap(_mask_overlay(self.session.active_mask))
+            self._overlay_pixmap = _mask_overlay(self.session.active_mask)
+            self._overlay_item.setPixmap(self._overlay_pixmap)
             self._path_item.setPen(QPen(QColor("#38bdf8"), 2.0))
         except ValueError:
             self._path_item.setPen(QPen(QColor("#ef4444"), 2.0))
+
+    def _apply_brush_at_scene_pos(self, scene_pos: QPointF, force_full: bool = False) -> None:
+        dirty_rect = self.session.apply_brush(
+            (scene_pos.x(), scene_pos.y()),
+            self.brush_radius,
+            self.current_brush_mode,
+        )
+        if force_full:
+            self._maybe_refresh_visuals(force=True)
+            return
+        self._refresh_overlay_region(dirty_rect)
+
+    def _refresh_overlay_region(self, rect: tuple[int, int, int, int]) -> None:
+        x0, y0, x1, y1 = rect
+        if x1 <= x0 or y1 <= y0:
+            return
+        patch_mask = self.session.active_mask_region(rect)
+        patch_pixmap = _mask_overlay(patch_mask)
+        painter = QPainter(self._overlay_pixmap)
+        painter.drawPixmap(x0, y0, patch_pixmap)
+        painter.end()
+        self._overlay_item.setPixmap(self._overlay_pixmap)
 
 
 class ContourEditorDialog(QDialog):

@@ -175,3 +175,15 @@ def test_manual_refine_session_invalidates_cache_after_brush_and_point_update(
     _ = session.active_mask
 
     assert calls["count"] == 2
+
+
+def test_apply_brush_returns_clipped_dirty_rect() -> None:
+    auto_mask = np.zeros((40, 40), dtype=np.float32)
+    auto_mask[8:32, 8:32] = 1.0
+    session = ManualRefineSession.from_mask(auto_mask)
+
+    session.begin_brush_stroke()
+    dirty = session.apply_brush((1.0, 1.0), radius=5, brush_mode="add")
+    session.end_brush_stroke()
+
+    assert dirty == (0, 0, 9, 9)
