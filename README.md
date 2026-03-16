@@ -1,0 +1,170 @@
+# ID Photo Background Tool
+
+离线证件照换底工具，基于 `Python 3.11`、`PySide6`、`ONNX Runtime` 和 `MODNet` 构建，面向 Windows 本地桌面使用场景。
+
+它的目标很直接：导入一张 `JPG/JPEG/PNG` 人像照片，自动完成人像抠图，并一键替换为白色、蓝色、红色等常见证件照背景色，同时保持边缘尽量自然，避免明显白边、锯齿和色溢出。
+
+> \[!IMPORTANT]
+> 本项目默认离线运行，不依赖云端接口，也不会上传用户图片。
+
+## Features
+
+- 本地桌面 GUI：单窗口工作台，适合 Windows 直接使用
+- 自动人像抠图：基于 `MODNet ONNX`，无需手工框选
+- 标准背景色：内置白 / 蓝 / 红三种常用证件照底色
+- 双栏预览：同时查看原图与处理结果
+- 高级设置：支持边缘柔化、导出格式、硬件模式切换
+- 导出结果：支持 `PNG` 和 `JPG`
+- 模型缺失显式提示：不会静默降级或伪造成功
+- 自动化测试：包含核心流程、推理引擎、设置持久化与 UI 交互测试
+
+## Screens at a Glance
+
+应用包含以下核心流程：
+
+1. 导入本地证件照或普通人像照片
+2. 自动完成 EXIF 方向纠正与图片预处理
+3. 使用 MODNet 生成人像 alpha mask
+4. 执行边缘优化与背景合成
+5. 预览结果并导出为 `PNG/JPG`
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI["PySide6 UI"] --> WIN["src/ui/window.py"]
+    WIN --> PIPE["ProcessingPipeline"]
+    PIPE --> IO["image_io / config / settings"]
+    PIPE --> OPS["image_ops / export"]
+    PIPE --> ENG["ModNetOnnxEngine"]
+    ENG --> ORT["ONNX Runtime CPU / DirectML"]
+    ENG --> MODEL["MODNet ONNX"]
+```
+
+### Processing pipeline
+
+- 读取并修正输入图片方向
+- 将图像转为统一 RGB 数组
+- 加载 MODNet ONNX 模型并执行推理
+- 输出 alpha mask 后做连通域过滤、形态学闭运算与平滑
+- 将前景与标准背景色合成
+- 预览图走缩放显示，导出图保留全尺寸结果
+
+## Getting Started
+
+### Prerequisites
+
+- Windows 10 / 11
+- Python `3.11`
+- 建议使用虚拟环境
+
+### Install dependencies
+
+```bash
+python -m pip install -e .[dev]
+```
+
+### Prepare the model
+
+```bash
+set PYTHONPATH=src
+python scripts/download_model.py
+```
+
+> \[!TIP]
+> 仓库已经内置模型文件 `assets/models/modnet_photographic_portrait_matting.onnx`。\
+> `scripts/download_model.py` 会优先把它复制到用户目录；如果内置文件不存在，再尝试联网下载。
+
+### Run the app
+
+```bash
+python -m main
+```
+
+启动后即可：
+
+- 点击“导入图片”
+- 选择白 / 蓝 / 红背景
+- 按需调节边缘柔化或硬件模式
+- 导出为 `PNG` 或 `JPG`
+
+## Packaging
+
+如果你希望生成 Windows 可执行包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/package.ps1
+```
+
+该脚本会使用 `PyInstaller` 打包，并把内置 MODNet 模型一并带入产物目录。
+
+## Testing
+
+运行全部测试：
+
+```bash
+python -m pytest
+```
+
+当前测试覆盖：
+
+- 请求模型与参数校验
+- 设置读写与导出目录记忆
+- 背景合成与边缘处理
+- 处理流水线与 alpha 缓存复用
+- 推理引擎错误提示与 provider 选择
+- PySide6 UI 交互流程
+
+## Project Structure
+
+```text
+src/
+  core/         配置、模型、流水线、图像处理、导出、设置持久化
+  inference/    MODNet ONNX 推理封装
+  ui/           PySide6 界面与工作流
+  main.py       应用入口
+assets/
+  models/       内置 MODNet ONNX 模型
+scripts/
+  download_model.py  模型准备脚本
+  package.ps1        Windows 打包脚本
+tests/
+  test_*.py     单元测试与 UI 测试
+```
+
+## Runtime Behavior
+
+### Hardware modes
+
+- `自动`：优先使用 `DirectML`，不可用时回退到 CPU
+- `CPU`：强制使用 `CPUExecutionProvider`
+- `GPU (DirectML)`：要求环境中可用 `DmlExecutionProvider`，否则明确报错
+
+### Export behavior
+
+- `PNG`：导出 RGBA，保留透明度信息
+- `JPG`：导出 RGB 成品图，适合直接提交或打印
+
+## Troubleshooting
+
+### 模型未准备好
+
+请先执行：
+
+```bash
+set PYTHONPATH=src
+python scripts/download_model.py
+```
+
+### 没有 DirectML 但切到了 GPU 模式
+
+这不是静默降级场景。程序会明确提示当前环境没有 `DirectML`，请改回“自动”或“CPU”模式。
+
+### 图片无法读取
+
+请确认：
+
+- 文件扩展名为 `jpg`、`jpeg`、`png`
+- 图片未损坏
+- 路径可访问
+
