@@ -56,4 +56,10 @@ class ProcessingResult:
     alpha_mask: np.ndarray
     elapsed_ms: float
     provider: str
+    source_image: np.ndarray | None = None
+    manual_mask: np.ndarray | None = None
     warnings: list[str] = field(default_factory=list)
+
+    @property
+    def active_mask(self) -> np.ndarray:
+        return self.manual_mask if self.manual_mask is not None else self.alpha_mask

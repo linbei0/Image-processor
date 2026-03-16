@@ -48,6 +48,18 @@ class FakePipeline:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"exported")
 
+    def apply_manual_mask(self, request, result: ProcessingResult, manual_mask: np.ndarray) -> ProcessingResult:
+        self.export_calls.append(("manual", manual_mask.copy(), request.bg_color))
+        fill = np.full((24, 24, 3), request.bg_color.rgb, dtype=np.uint8)
+        return ProcessingResult(
+            preview_image=fill.copy(),
+            final_image=fill,
+            alpha_mask=result.alpha_mask,
+            manual_mask=manual_mask,
+            elapsed_ms=5.0,
+            provider=result.provider,
+        )
+
 
 def create_image(path: Path) -> None:
     Image.new("RGB", (40, 50), (120, 130, 140)).save(path)
@@ -156,3 +168,53 @@ def test_export_uses_pipeline_and_persists_last_export_dir(
     assert export_path.exists()
     assert quality == 95
     assert settings_store.load().last_export_dir == export_path.parent
+
+
+def test_manual_refine_button_only_enables_after_result(
+    tmp_path: Path, qtbot, monkeypatch: pytest.MonkeyPatch, settings_store: AppSettingsStore
+) -> None:
+    model_path = tmp_path / "modnet.onnx"
+    model_path.write_bytes(b"ready")
+    image_path = tmp_path / "portrait.png"
+    create_image(image_path)
+    pipeline = FakePipeline(model_path)
+    window = IdPhotoWindow(pipeline=pipeline, settings_store=settings_store)
+    qtbot.addWidget(window)
+    window.show()
+
+    assert not window.manual_refine_button.isEnabled()
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(image_path), "PNG"))
+    qtbot.mouseClick(window.import_button, Qt.LeftButton)
+    qtbot.waitUntil(lambda: window.manual_refine_button.isEnabled(), timeout=3000)
+
+    assert window.manual_refine_button.isEnabled()
+
+
+def test_manual_refine_apply_updates_result_without_rerunning_pipeline(
+    tmp_path: Path, qtbot, monkeypatch: pytest.MonkeyPatch, settings_store: AppSettingsStore
+) -> None:
+    model_path = tmp_path / "modnet.onnx"
+    model_path.write_bytes(b"ready")
+    image_path = tmp_path / "portrait.png"
+    create_image(image_path)
+    pipeline = FakePipeline(model_path)
+    window = IdPhotoWindow(pipeline=pipeline, settings_store=settings_store)
+    qtbot.addWidget(window)
+    window.show()
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(image_path), "PNG"))
+    qtbot.mouseClick(window.import_button, Qt.LeftButton)
+    qtbot.waitUntil(lambda: window.manual_refine_button.isEnabled(), timeout=3000)
+    initial_calls = len(pipeline.process_calls)
+
+    manual_mask = np.zeros((24, 24), dtype=np.float32)
+    manual_mask[6:-6, 6:-6] = 1.0
+    window._apply_manual_refine(manual_mask)
+    qtbot.waitUntil(lambda: window.current_result is not None and window.current_result.manual_mask is not None, timeout=3000)
+
+    qtbot.mouseClick(window.color_buttons[BackgroundColor.RED], Qt.LeftButton)
+    qtbot.waitUntil(lambda: window.current_result is not None, timeout=3000)
+
+    assert len(pipeline.process_calls) == initial_calls
+    assert window.current_result.manual_mask is not None

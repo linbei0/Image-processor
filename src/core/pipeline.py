@@ -57,11 +57,32 @@ class ProcessingPipeline:
             alpha_mask=alpha_mask,
             elapsed_ms=elapsed_ms,
             provider=provider,
+            source_image=image,
+        )
+
+    def apply_manual_mask(
+        self,
+        request: ProcessingRequest,
+        result: ProcessingResult,
+        manual_mask: np.ndarray,
+    ) -> ProcessingResult:
+        image = result.source_image if result.source_image is not None else resize_long_side(load_image_rgb(request.input_path), 1600)
+        refined_mask = EdgeRefiner(request.edge_refine_level).refine(image, manual_mask)
+        final_image = BackgroundComposer.compose(image, refined_mask, request.bg_color.rgb)
+        preview_image = create_preview(final_image, max_side=960)
+        return ProcessingResult(
+            preview_image=preview_image,
+            final_image=final_image,
+            alpha_mask=result.alpha_mask,
+            manual_mask=refined_mask,
+            elapsed_ms=0.0,
+            provider=result.provider,
+            source_image=image,
         )
 
     def export(self, path: Path, result: ProcessingResult, quality: int = 95) -> None:
         if path.suffix.lower() == ".png":
-            self.export_service.save_png(path, result.final_image, result.alpha_mask)
+            self.export_service.save_png(path, result.final_image, result.active_mask)
             return
         self.export_service.save_jpg(path, result.final_image, quality=quality)
 
