@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 from core.manual_refine import (
+    ManualEditResult,
     ManualRefineSession,
+    compose_active_mask,
     extract_main_contour,
     polygon_to_mask,
     resample_closed_contour,
@@ -44,6 +46,7 @@ def test_manual_refine_session_supports_undo_and_redo() -> None:
     )
     session = ManualRefineSession(
         image_shape=(80, 80),
+        auto_mask=np.zeros((80, 80), dtype=np.float32),
         default_points=contour,
         current_points=contour.copy(),
     )
@@ -67,3 +70,62 @@ def test_polygon_to_mask_rejects_self_intersection() -> None:
 
     with pytest.raises(ValueError, match="轮廓无效"):
         polygon_to_mask(bow, (80, 80))
+
+
+def test_compose_active_mask_applies_contour_then_brush_add_and_erase() -> None:
+    auto_mask = np.zeros((20, 20), dtype=np.float32)
+    auto_mask[4:16, 4:16] = 1.0
+    contour_mask = np.zeros((20, 20), dtype=np.float32)
+    contour_mask[6:14, 6:14] = 1.0
+    brush_add = np.zeros((20, 20), dtype=np.float32)
+    brush_add[2:6, 2:6] = 1.0
+    brush_erase = np.zeros((20, 20), dtype=np.float32)
+    brush_erase[10:14, 10:14] = 1.0
+
+    active = compose_active_mask(
+        auto_mask=auto_mask,
+        contour_mask=contour_mask,
+        brush_add_mask=brush_add,
+        brush_erase_mask=brush_erase,
+    )
+
+    assert active[3, 3] == 1.0
+    assert active[11, 11] == 0.0
+    assert active[7, 7] == 1.0
+    assert active[5, 15] == 0.0
+
+
+def test_manual_refine_session_supports_brush_add_erase_and_undo_redo() -> None:
+    auto_mask = np.zeros((40, 40), dtype=np.float32)
+    auto_mask[8:32, 8:32] = 1.0
+    session = ManualRefineSession.from_mask(auto_mask)
+
+    session.begin_brush_stroke()
+    session.apply_brush((4.0, 4.0), radius=3, brush_mode="add")
+    session.end_brush_stroke()
+    assert session.active_mask[4, 4] == 1.0
+
+    session.begin_brush_stroke()
+    session.apply_brush((20.0, 20.0), radius=4, brush_mode="erase")
+    session.end_brush_stroke()
+    assert session.active_mask[20, 20] == 0.0
+
+    session.undo()
+    assert session.active_mask[20, 20] == 1.0
+    session.redo()
+    assert session.active_mask[20, 20] == 0.0
+
+
+def test_manual_refine_session_exports_manual_edit_result() -> None:
+    auto_mask = np.zeros((40, 40), dtype=np.float32)
+    auto_mask[8:32, 8:32] = 1.0
+    session = ManualRefineSession.from_mask(auto_mask)
+    session.begin_brush_stroke()
+    session.apply_brush((4.0, 4.0), radius=2, brush_mode="add")
+    session.end_brush_stroke()
+
+    result = session.build_edit_result()
+
+    assert isinstance(result, ManualEditResult)
+    assert result.active_mask[4, 4] == 1.0
+    assert result.auto_mask.shape == auto_mask.shape

@@ -10,6 +10,22 @@ MIN_POLYGON_POINTS = 4
 DEFAULT_HISTORY_LIMIT = 32
 
 
+@dataclass(slots=True)
+class ManualEditResult:
+    auto_mask: np.ndarray
+    contour_mask: np.ndarray | None
+    brush_add_mask: np.ndarray | None
+    brush_erase_mask: np.ndarray | None
+    active_mask: np.ndarray
+
+
+@dataclass(slots=True)
+class EditSnapshot:
+    current_points: np.ndarray
+    brush_add_mask: np.ndarray
+    brush_erase_mask: np.ndarray
+
+
 def extract_main_contour(mask: np.ndarray) -> np.ndarray:
     binary = (mask > 0.5).astype(np.uint8)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -87,26 +103,75 @@ def polygon_to_mask(points: np.ndarray, image_shape: tuple[int, int]) -> np.ndar
     return mask
 
 
+def compose_active_mask(
+    auto_mask: np.ndarray,
+    contour_mask: np.ndarray | None,
+    brush_add_mask: np.ndarray | None,
+    brush_erase_mask: np.ndarray | None,
+) -> np.ndarray:
+    base = contour_mask.copy() if contour_mask is not None else auto_mask.copy()
+    if brush_add_mask is not None:
+        base = np.maximum(base, brush_add_mask)
+    if brush_erase_mask is not None:
+        base = np.where(brush_erase_mask > 0.5, 0.0, base)
+    return np.clip(base, 0.0, 1.0).astype(np.float32)
+
+
 @dataclass(slots=True)
 class ManualRefineSession:
     image_shape: tuple[int, int]
+    auto_mask: np.ndarray
     default_points: np.ndarray
     current_points: np.ndarray
     history_limit: int = DEFAULT_HISTORY_LIMIT
-    _undo_stack: list[np.ndarray] = field(default_factory=list)
-    _redo_stack: list[np.ndarray] = field(default_factory=list)
+    brush_add_mask: np.ndarray = field(init=False)
+    brush_erase_mask: np.ndarray = field(init=False)
+    _undo_stack: list[EditSnapshot] = field(default_factory=list)
+    _redo_stack: list[EditSnapshot] = field(default_factory=list)
+    _brush_stroke_active: bool = field(default=False)
+
+    def __post_init__(self) -> None:
+        self.brush_add_mask = np.zeros(self.image_shape, dtype=np.float32)
+        self.brush_erase_mask = np.zeros(self.image_shape, dtype=np.float32)
 
     @classmethod
     def from_mask(cls, mask: np.ndarray, target_spacing: float = 12.0) -> "ManualRefineSession":
         contour = extract_main_contour(mask)
         points = resample_closed_contour(contour, target_spacing=target_spacing)
-        return cls(image_shape=mask.shape[:2], default_points=points.copy(), current_points=points.copy())
+        return cls(
+            image_shape=mask.shape[:2],
+            auto_mask=mask.astype(np.float32).copy(),
+            default_points=points.copy(),
+            current_points=points.copy(),
+        )
 
-    def snapshot(self) -> np.ndarray:
-        return self.current_points.copy()
+    @property
+    def contour_mask(self) -> np.ndarray:
+        return polygon_to_mask(self.current_points, self.image_shape)
+
+    @property
+    def active_mask(self) -> np.ndarray:
+        return compose_active_mask(
+            auto_mask=self.auto_mask,
+            contour_mask=self.contour_mask,
+            brush_add_mask=self.brush_add_mask,
+            brush_erase_mask=self.brush_erase_mask,
+        )
+
+    def snapshot(self) -> EditSnapshot:
+        return EditSnapshot(
+            current_points=self.current_points.copy(),
+            brush_add_mask=self.brush_add_mask.copy(),
+            brush_erase_mask=self.brush_erase_mask.copy(),
+        )
+
+    def _restore_snapshot(self, snapshot: EditSnapshot) -> None:
+        self.current_points = snapshot.current_points.copy()
+        self.brush_add_mask = snapshot.brush_add_mask.copy()
+        self.brush_erase_mask = snapshot.brush_erase_mask.copy()
 
     def push_history(self) -> None:
-        self._undo_stack.append(self.current_points.copy())
+        self._undo_stack.append(self.snapshot())
         if len(self._undo_stack) > self.history_limit:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
@@ -129,23 +194,55 @@ class ManualRefineSession:
         self.push_history()
         self.current_points = np.delete(self.current_points, index, axis=0)
 
+    def begin_brush_stroke(self) -> None:
+        if not self._brush_stroke_active:
+            self.push_history()
+            self._brush_stroke_active = True
+
+    def apply_brush(self, center: tuple[float, float], radius: int, brush_mode: str) -> None:
+        radius = max(1, int(radius))
+        x = int(np.clip(round(center[0]), 0, self.image_shape[1] - 1))
+        y = int(np.clip(round(center[1]), 0, self.image_shape[0] - 1))
+        target = self.brush_add_mask if brush_mode == "add" else self.brush_erase_mask
+        cv2.circle(target, (x, y), radius, 1.0, thickness=-1)
+        if brush_mode == "add":
+            cv2.circle(self.brush_erase_mask, (x, y), radius, 0.0, thickness=-1)
+        else:
+            cv2.circle(self.brush_add_mask, (x, y), radius, 0.0, thickness=-1)
+
+    def end_brush_stroke(self) -> None:
+        self._brush_stroke_active = False
+
     def undo(self) -> bool:
         if not self._undo_stack:
             return False
-        self._redo_stack.append(self.current_points.copy())
-        self.current_points = self._undo_stack.pop()
+        self._redo_stack.append(self.snapshot())
+        snapshot = self._undo_stack.pop()
+        self._restore_snapshot(snapshot)
         return True
 
     def redo(self) -> bool:
         if not self._redo_stack:
             return False
-        self._undo_stack.append(self.current_points.copy())
-        self.current_points = self._redo_stack.pop()
+        self._undo_stack.append(self.snapshot())
+        snapshot = self._redo_stack.pop()
+        self._restore_snapshot(snapshot)
         return True
 
     def reset(self) -> None:
         self.push_history()
         self.current_points = self.default_points.copy()
+        self.brush_add_mask.fill(0.0)
+        self.brush_erase_mask.fill(0.0)
 
     def build_mask(self) -> np.ndarray:
-        return polygon_to_mask(self.current_points, self.image_shape)
+        return self.active_mask
+
+    def build_edit_result(self) -> ManualEditResult:
+        return ManualEditResult(
+            auto_mask=self.auto_mask.copy(),
+            contour_mask=self.contour_mask.copy(),
+            brush_add_mask=self.brush_add_mask.copy(),
+            brush_erase_mask=self.brush_erase_mask.copy(),
+            active_mask=self.active_mask.copy(),
+        )

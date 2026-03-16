@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.manual_refine import ManualRefineSession
+from core.manual_refine import ManualEditResult, ManualRefineSession
 from core.models import BackgroundColor, ExportFormat, HardwareMode, ProcessingRequest, ProcessingResult
 from core.settings import AppSettingsStore
 from ui.contour_editor import ContourEditorDialog
@@ -369,7 +369,24 @@ class IdPhotoWindow(QMainWindow):
             return
         request = self._build_request()
         if self.current_result is not None and self.current_result.manual_mask is not None:
-            updated = self.pipeline.apply_manual_mask(request, self.current_result, self.current_result.manual_mask)
+            if any(
+                layer is not None
+                for layer in (
+                    self.current_result.manual_contour_mask,
+                    self.current_result.manual_brush_add_mask,
+                    self.current_result.manual_brush_erase_mask,
+                )
+            ):
+                edit_result = ManualEditResult(
+                    auto_mask=self.current_result.alpha_mask,
+                    contour_mask=self.current_result.manual_contour_mask,
+                    brush_add_mask=self.current_result.manual_brush_add_mask,
+                    brush_erase_mask=self.current_result.manual_brush_erase_mask,
+                    active_mask=self.current_result.active_mask,
+                )
+                updated = self.pipeline.apply_manual_edit(request, self.current_result, edit_result)
+            else:
+                updated = self.pipeline.apply_manual_mask(request, self.current_result, self.current_result.manual_mask)
             self._on_process_succeeded(request, updated)
             return
         self.coordinator.process(request)
@@ -405,13 +422,16 @@ class IdPhotoWindow(QMainWindow):
                 image = np.frombuffer(buffer, dtype=np.uint8).reshape(ptr.height(), ptr.width(), 3).copy()
         dialog = self.editor_dialog_class(session=session, image=image, parent=self)
         if dialog.exec():
-            self._apply_manual_refine(dialog.build_manual_mask())
+            self._apply_manual_refine(dialog.build_edit_result())
 
-    def _apply_manual_refine(self, manual_mask: np.ndarray) -> None:
+    def _apply_manual_refine(self, manual_result: ManualEditResult | np.ndarray) -> None:
         if self.current_input_path is None or self.current_result is None:
             return
         request = self._build_request()
-        updated = self.pipeline.apply_manual_mask(request, self.current_result, manual_mask)
+        if isinstance(manual_result, ManualEditResult):
+            updated = self.pipeline.apply_manual_edit(request, self.current_result, manual_result)
+        else:
+            updated = self.pipeline.apply_manual_mask(request, self.current_result, manual_result)
         self._on_process_succeeded(request, updated)
         self.statusBar().showMessage("已应用手动微调", 6000)
 

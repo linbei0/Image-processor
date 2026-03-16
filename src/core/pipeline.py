@@ -5,12 +5,12 @@ from pathlib import Path
 import hashlib
 import time
 
-import cv2
 import numpy as np
 
 from core.export import ExportService
 from core.image_io import create_preview, load_image_rgb, resize_long_side
 from core.image_ops import BackgroundComposer, EdgeRefiner
+from core.manual_refine import ManualEditResult
 from core.models import ProcessingRequest, ProcessingResult
 from inference.engine import ModNetOnnxEngine
 
@@ -74,10 +74,33 @@ class ProcessingPipeline:
             preview_image=preview_image,
             final_image=final_image,
             alpha_mask=result.alpha_mask,
-            manual_mask=refined_mask,
             elapsed_ms=0.0,
             provider=result.provider,
             source_image=image,
+            manual_mask=refined_mask,
+        )
+
+    def apply_manual_edit(
+        self,
+        request: ProcessingRequest,
+        result: ProcessingResult,
+        edit_result: ManualEditResult,
+    ) -> ProcessingResult:
+        image = result.source_image if result.source_image is not None else resize_long_side(load_image_rgb(request.input_path), 1600)
+        refined_active = EdgeRefiner(request.edge_refine_level).refine(image, edit_result.active_mask)
+        final_image = BackgroundComposer.compose(image, refined_active, request.bg_color.rgb)
+        preview_image = create_preview(final_image, max_side=960)
+        return ProcessingResult(
+            preview_image=preview_image,
+            final_image=final_image,
+            alpha_mask=result.alpha_mask,
+            elapsed_ms=0.0,
+            provider=result.provider,
+            source_image=image,
+            manual_mask=refined_active,
+            manual_contour_mask=edit_result.contour_mask,
+            manual_brush_add_mask=edit_result.brush_add_mask,
+            manual_brush_erase_mask=edit_result.brush_erase_mask,
         )
 
     def export(self, path: Path, result: ProcessingResult, quality: int = 95) -> None:
