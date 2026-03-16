@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QBrush, QImage, QPainter, QPainterPath, QPen, QPixmap
@@ -107,6 +109,8 @@ class ContourEditorView(QGraphicsView):
         self._painting = False
         self._did_initial_fit = False
         self._user_changed_view = False
+        self._last_refresh_at = -1.0
+        self._refresh_interval_seconds = 1 / 60
         self.edit_mode = "contour"
         self.current_brush_mode = "add"
         self.brush_radius = 24
@@ -207,6 +211,12 @@ class ContourEditorView(QGraphicsView):
         self.session.reset()
         self._rebuild_items()
 
+    def _maybe_refresh_visuals(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if force or (now - self._last_refresh_at) >= self._refresh_interval_seconds:
+            self._refresh_visuals()
+            self._last_refresh_at = now
+
     def wheelEvent(self, event) -> None:  # noqa: N802
         self._user_changed_view = True
         if self.edit_mode == "brush" and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -236,7 +246,7 @@ class ContourEditorView(QGraphicsView):
             self._painting = True
             self.session.begin_brush_stroke()
             self.session.apply_brush((scene_pos.x(), scene_pos.y()), self.brush_radius, self.current_brush_mode)
-            self._refresh_visuals()
+            self._maybe_refresh_visuals(force=True)
             return
         if event.button() == Qt.MouseButton.LeftButton and not isinstance(item, ControlPointItem):
             self._user_changed_view = True
@@ -250,7 +260,7 @@ class ContourEditorView(QGraphicsView):
             self._cursor_item.update_cursor(scene_pos, self.brush_radius)
             if self._painting:
                 self.session.apply_brush((scene_pos.x(), scene_pos.y()), self.brush_radius, self.current_brush_mode)
-                self._refresh_visuals()
+                self._maybe_refresh_visuals()
                 return
         super().mouseMoveEvent(event)
 
@@ -258,7 +268,7 @@ class ContourEditorView(QGraphicsView):
         if self._painting and event.button() == Qt.MouseButton.LeftButton:
             self._painting = False
             self.session.end_brush_stroke()
-            self._refresh_visuals()
+            self._maybe_refresh_visuals(force=True)
             event.accept()
             return
         super().mouseReleaseEvent(event)

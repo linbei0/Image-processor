@@ -129,6 +129,8 @@ class ManualRefineSession:
     _undo_stack: list[EditSnapshot] = field(default_factory=list)
     _redo_stack: list[EditSnapshot] = field(default_factory=list)
     _brush_stroke_active: bool = field(default=False)
+    _contour_mask_cache: np.ndarray | None = field(default=None, init=False)
+    _active_mask_cache: np.ndarray | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.brush_add_mask = np.zeros(self.image_shape, dtype=np.float32)
@@ -147,16 +149,21 @@ class ManualRefineSession:
 
     @property
     def contour_mask(self) -> np.ndarray:
-        return polygon_to_mask(self.current_points, self.image_shape)
+        if self._contour_mask_cache is None:
+            self._contour_mask_cache = polygon_to_mask(self.current_points, self.image_shape)
+        return self._contour_mask_cache.copy()
 
     @property
     def active_mask(self) -> np.ndarray:
-        return compose_active_mask(
-            auto_mask=self.auto_mask,
-            contour_mask=self.contour_mask,
-            brush_add_mask=self.brush_add_mask,
-            brush_erase_mask=self.brush_erase_mask,
-        )
+        if self._active_mask_cache is None:
+            contour_mask = self.contour_mask if self._contour_mask_cache is None else self._contour_mask_cache
+            self._active_mask_cache = compose_active_mask(
+                auto_mask=self.auto_mask,
+                contour_mask=contour_mask,
+                brush_add_mask=self.brush_add_mask,
+                brush_erase_mask=self.brush_erase_mask,
+            )
+        return self._active_mask_cache.copy()
 
     def snapshot(self) -> EditSnapshot:
         return EditSnapshot(
@@ -169,6 +176,13 @@ class ManualRefineSession:
         self.current_points = snapshot.current_points.copy()
         self.brush_add_mask = snapshot.brush_add_mask.copy()
         self.brush_erase_mask = snapshot.brush_erase_mask.copy()
+        self._invalidate_caches()
+
+    def _invalidate_caches(self, *, contour: bool = True, active: bool = True) -> None:
+        if contour:
+            self._contour_mask_cache = None
+        if active:
+            self._active_mask_cache = None
 
     def push_history(self) -> None:
         self._undo_stack.append(self.snapshot())
@@ -181,18 +195,21 @@ class ManualRefineSession:
         x = float(np.clip(point[0], 0, self.image_shape[1] - 1))
         y = float(np.clip(point[1], 0, self.image_shape[0] - 1))
         self.current_points[index] = np.array([x, y], dtype=np.float32)
+        self._invalidate_caches()
 
     def insert_point(self, segment_index: int, point: tuple[float, float]) -> None:
         self.push_history()
         insert_at = segment_index + 1
         new_point = np.array([[point[0], point[1]]], dtype=np.float32)
         self.current_points = np.insert(self.current_points, insert_at, new_point, axis=0)
+        self._invalidate_caches()
 
     def delete_point(self, index: int) -> None:
         if len(self.current_points) <= MIN_POLYGON_POINTS:
             raise ValueError("控制点数量不能再减少")
         self.push_history()
         self.current_points = np.delete(self.current_points, index, axis=0)
+        self._invalidate_caches()
 
     def begin_brush_stroke(self) -> None:
         if not self._brush_stroke_active:
@@ -209,6 +226,7 @@ class ManualRefineSession:
             cv2.circle(self.brush_erase_mask, (x, y), radius, 0.0, thickness=-1)
         else:
             cv2.circle(self.brush_add_mask, (x, y), radius, 0.0, thickness=-1)
+        self._invalidate_caches(contour=False, active=True)
 
     def end_brush_stroke(self) -> None:
         self._brush_stroke_active = False
@@ -234,6 +252,7 @@ class ManualRefineSession:
         self.current_points = self.default_points.copy()
         self.brush_add_mask.fill(0.0)
         self.brush_erase_mask.fill(0.0)
+        self._invalidate_caches()
 
     def build_mask(self) -> np.ndarray:
         return self.active_mask

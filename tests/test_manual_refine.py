@@ -129,3 +129,49 @@ def test_manual_refine_session_exports_manual_edit_result() -> None:
     assert isinstance(result, ManualEditResult)
     assert result.active_mask[4, 4] == 1.0
     assert result.auto_mask.shape == auto_mask.shape
+
+
+def test_manual_refine_session_caches_contour_and_active_mask(monkeypatch: pytest.MonkeyPatch) -> None:
+    auto_mask = np.zeros((40, 40), dtype=np.float32)
+    auto_mask[8:32, 8:32] = 1.0
+    session = ManualRefineSession.from_mask(auto_mask)
+    calls = {"count": 0}
+    original = polygon_to_mask
+
+    def counting_polygon(points, image_shape):
+        calls["count"] += 1
+        return original(points, image_shape)
+
+    monkeypatch.setattr("core.manual_refine.polygon_to_mask", counting_polygon)
+
+    _ = session.active_mask
+    _ = session.active_mask
+    _ = session.contour_mask
+
+    assert calls["count"] == 1
+
+
+def test_manual_refine_session_invalidates_cache_after_brush_and_point_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auto_mask = np.zeros((40, 40), dtype=np.float32)
+    auto_mask[8:32, 8:32] = 1.0
+    session = ManualRefineSession.from_mask(auto_mask)
+    calls = {"count": 0}
+    original = polygon_to_mask
+
+    def counting_polygon(points, image_shape):
+        calls["count"] += 1
+        return original(points, image_shape)
+
+    monkeypatch.setattr("core.manual_refine.polygon_to_mask", counting_polygon)
+
+    _ = session.active_mask
+    session.begin_brush_stroke()
+    session.apply_brush((4.0, 4.0), radius=2, brush_mode="add")
+    session.end_brush_stroke()
+    _ = session.active_mask
+    session.update_point(0, (12.0, 14.0))
+    _ = session.active_mask
+
+    assert calls["count"] == 2

@@ -8,6 +8,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QGraphicsView
 
 from core.manual_refine import ManualRefineSession
+import ui.contour_editor as contour_editor_module
 from ui.contour_editor import ContourEditorView
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -46,3 +47,24 @@ def test_editor_supports_switching_between_contour_and_brush_modes(editor_view) 
     assert editor_view.current_brush_mode == "erase"
     editor_view.set_edit_mode("contour")
     assert editor_view.edit_mode == "contour"
+
+
+def test_editor_throttles_repeated_brush_refreshes(
+    editor_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    editor_view.set_edit_mode("brush")
+    refresh_calls = {"count": 0}
+
+    def fake_refresh() -> None:
+        refresh_calls["count"] += 1
+
+    timeline = iter([0.0, 0.005, 0.006, 0.030])
+    monkeypatch.setattr(editor_view, "_refresh_visuals", fake_refresh)
+    monkeypatch.setattr(contour_editor_module.time, "monotonic", lambda: next(timeline))
+
+    editor_view._maybe_refresh_visuals()
+    editor_view._maybe_refresh_visuals()
+    editor_view._maybe_refresh_visuals(force=True)
+
+    assert refresh_calls["count"] == 2
