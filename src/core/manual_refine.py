@@ -18,6 +18,7 @@ class ManualEditResult:
     brush_add_mask: np.ndarray | None
     brush_erase_mask: np.ndarray | None
     active_mask: np.ndarray
+    base_mode: str = "contour"
 
 
 @dataclass(slots=True)
@@ -109,8 +110,12 @@ def compose_active_mask(
     contour_mask: np.ndarray | None,
     brush_add_mask: np.ndarray | None,
     brush_erase_mask: np.ndarray | None,
+    base_mode: str = "contour",
 ) -> np.ndarray:
-    base = contour_mask.copy() if contour_mask is not None else auto_mask.copy()
+    if base_mode == "brush":
+        base = auto_mask.copy()
+    else:
+        base = contour_mask.copy() if contour_mask is not None else auto_mask.copy()
     if brush_add_mask is not None:
         base = np.maximum(base, brush_add_mask)
     if brush_erase_mask is not None:
@@ -132,6 +137,7 @@ class ManualRefineSession:
     _brush_stroke_active: bool = field(default=False)
     _contour_mask_cache: np.ndarray | None = field(default=None, init=False)
     _active_mask_cache: np.ndarray | None = field(default=None, init=False)
+    base_mode: str = field(default="contour")
 
     def __post_init__(self) -> None:
         self.brush_add_mask = np.zeros(self.image_shape, dtype=np.float32)
@@ -186,6 +192,7 @@ class ManualRefineSession:
                 contour_mask=contour_mask,
                 brush_add_mask=self.brush_add_mask,
                 brush_erase_mask=self.brush_erase_mask,
+                base_mode=self.base_mode,
             )
         return self._active_mask_cache
 
@@ -286,4 +293,5 @@ class ManualRefineSession:
             brush_add_mask=self.brush_add_mask.copy(),
             brush_erase_mask=self.brush_erase_mask.copy(),
             active_mask=self.active_mask.copy(),
+            base_mode=self.base_mode,
         )

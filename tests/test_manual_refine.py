@@ -187,3 +187,31 @@ def test_apply_brush_returns_clipped_dirty_rect() -> None:
     session.end_brush_stroke()
 
     assert dirty == (0, 0, 9, 9)
+
+
+def test_compose_active_mask_uses_auto_base_in_brush_mode() -> None:
+    auto_mask = np.zeros((20, 20), dtype=np.float32)
+    auto_mask[4:16, 4:16] = 1.0
+    contour_mask = np.zeros((20, 20), dtype=np.float32)
+    contour_mask[6:14, 6:14] = 1.0
+    brush_add = np.zeros((20, 20), dtype=np.float32)
+    brush_add[1:3, 1:3] = 1.0
+
+    contour_mode = compose_active_mask(
+        auto_mask=auto_mask,
+        contour_mask=contour_mask,
+        brush_add_mask=brush_add,
+        brush_erase_mask=None,
+        base_mode="contour",
+    )
+    brush_mode = compose_active_mask(
+        auto_mask=auto_mask,
+        contour_mask=contour_mask,
+        brush_add_mask=brush_add,
+        brush_erase_mask=None,
+        base_mode="brush",
+    )
+
+    assert contour_mode[5, 5] == 0.0
+    assert brush_mode[5, 5] == 1.0
+    assert brush_mode[1, 1] == 1.0

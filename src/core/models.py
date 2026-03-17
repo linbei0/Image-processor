@@ -41,12 +41,16 @@ def compose_result_mask(
     manual_brush_add_mask: np.ndarray | None,
     manual_brush_erase_mask: np.ndarray | None,
     legacy_manual_mask: np.ndarray | None,
+    manual_edit_mode: str = "contour",
 ) -> np.ndarray:
     if legacy_manual_mask is not None and all(
         value is None for value in (manual_contour_mask, manual_brush_add_mask, manual_brush_erase_mask)
     ):
         return legacy_manual_mask.astype(np.float32)
-    base = manual_contour_mask.astype(np.float32).copy() if manual_contour_mask is not None else auto_mask.astype(np.float32).copy()
+    if manual_edit_mode == "brush":
+        base = auto_mask.astype(np.float32).copy()
+    else:
+        base = manual_contour_mask.astype(np.float32).copy() if manual_contour_mask is not None else auto_mask.astype(np.float32).copy()
     if manual_brush_add_mask is not None:
         base = np.maximum(base, manual_brush_add_mask.astype(np.float32))
     if manual_brush_erase_mask is not None:
@@ -80,6 +84,7 @@ class ProcessingResult:
     manual_contour_mask: np.ndarray | None = None
     manual_brush_add_mask: np.ndarray | None = None
     manual_brush_erase_mask: np.ndarray | None = None
+    manual_edit_mode: str = "contour"
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -90,4 +95,5 @@ class ProcessingResult:
             manual_brush_add_mask=self.manual_brush_add_mask,
             manual_brush_erase_mask=self.manual_brush_erase_mask,
             legacy_manual_mask=self.manual_mask,
+            manual_edit_mode=self.manual_edit_mode,
         )

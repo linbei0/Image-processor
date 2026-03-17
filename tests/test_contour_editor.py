@@ -89,3 +89,21 @@ def test_editor_uses_partial_overlay_refresh_for_brush_updates(
 
     assert calls["full"] == 0
     assert calls["partial"] == 1
+
+
+def test_switching_to_brush_mode_updates_session_base_mode(editor_view) -> None:
+    editor_view.set_edit_mode("brush")
+
+    assert editor_view.session.base_mode == "brush"
+
+
+def test_reset_in_brush_mode_keeps_brush_mode_and_auto_base(editor_view) -> None:
+    editor_view.set_edit_mode("brush")
+    editor_view.session.begin_brush_stroke()
+    editor_view.session.apply_brush((10.0, 10.0), radius=3, brush_mode="add")
+    editor_view.session.end_brush_stroke()
+
+    editor_view.reset()
+
+    assert editor_view.edit_mode == "brush"
+    assert editor_view.session.base_mode == "brush"

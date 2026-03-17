@@ -145,12 +145,15 @@ class ContourEditorView(QGraphicsView):
 
     def set_edit_mode(self, mode: str) -> None:
         self.edit_mode = mode
+        self.session.base_mode = mode
+        self.session._invalidate_caches(contour=False, active=True)
         show_handles = mode == "contour"
         for item in self._handle_items:
             item.setVisible(show_handles)
         self._path_item.setVisible(show_handles)
         if mode != "brush":
             self._cursor_item.hide()
+        self._refresh_visuals()
         self.mode_changed.emit(mode)
 
     def set_brush_mode(self, mode: str) -> None:
@@ -306,6 +309,7 @@ class ContourEditorView(QGraphicsView):
             self._scene.addItem(handle)
             self._handle_items.append(handle)
         self._refresh_visuals()
+        self.set_edit_mode(self.edit_mode)
 
     def _fit_scene_to_view(self) -> None:
         self.resetTransform()

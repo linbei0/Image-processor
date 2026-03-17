@@ -84,6 +84,7 @@ def test_pipeline_applies_manual_edit_result_without_rerunning_engine(tmp_path: 
         brush_add_mask=add_mask,
         brush_erase_mask=erase_mask,
         active_mask=active_mask,
+        base_mode="contour",
     )
 
     updated = pipeline.apply_manual_edit(request, base, edit_result)
@@ -92,3 +93,34 @@ def test_pipeline_applies_manual_edit_result_without_rerunning_engine(tmp_path: 
     assert updated.manual_contour_mask is not None
     assert updated.manual_brush_add_mask is not None
     assert updated.manual_brush_erase_mask is not None
+
+
+def test_pipeline_preserves_brush_mode_base_for_followup_recompose(tmp_path: Path) -> None:
+    image_path = tmp_path / "portrait.png"
+    create_sample_image(image_path)
+    engine = FakeEngine()
+    pipeline = ProcessingPipeline(engine=engine)
+    request = ProcessingRequest(
+        input_path=image_path,
+        bg_color=BackgroundColor.BLUE,
+        output_format=ExportFormat.PNG,
+        hardware_mode=HardwareMode.AUTO,
+    )
+    base = pipeline.process(request)
+    contour_mask = np.zeros_like(base.alpha_mask)
+    contour_mask[10:22, 10:22] = 1.0
+    add_mask = np.zeros_like(base.alpha_mask)
+    add_mask[1:3, 1:3] = 1.0
+    active_mask = np.maximum(base.alpha_mask, add_mask).astype(np.float32)
+    edit_result = ManualEditResult(
+        auto_mask=base.alpha_mask,
+        contour_mask=contour_mask,
+        brush_add_mask=add_mask,
+        brush_erase_mask=None,
+        active_mask=active_mask,
+        base_mode="brush",
+    )
+
+    updated = pipeline.apply_manual_edit(request, base, edit_result)
+
+    assert updated.manual_edit_mode == "brush"

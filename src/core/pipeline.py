@@ -101,6 +101,7 @@ class ProcessingPipeline:
             manual_contour_mask=edit_result.contour_mask,
             manual_brush_add_mask=edit_result.brush_add_mask,
             manual_brush_erase_mask=edit_result.brush_erase_mask,
+            manual_edit_mode=edit_result.base_mode,
         )
 
     def export(self, path: Path, result: ProcessingResult, quality: int = 95) -> None:

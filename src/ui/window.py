@@ -389,6 +389,7 @@ class IdPhotoWindow(QMainWindow):
                     brush_add_mask=self.current_result.manual_brush_add_mask,
                     brush_erase_mask=self.current_result.manual_brush_erase_mask,
                     active_mask=self.current_result.active_mask,
+                    base_mode=self.current_result.manual_edit_mode,
                 )
                 updated = self.pipeline.apply_manual_edit(request, self.current_result, edit_result)
             else:
